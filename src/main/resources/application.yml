@@ -1,0 +1,29 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: lucene-service
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+lucene:
+  index-path: ./lucene-index
+  bm25:
+    k1: 1.2
+    b: 0.75
+  stopwords-path: classpath:stopwords.txt
+  batch-commit-size: 100
+
+chunking:
+  chunk-size-tokens: 400
+  chunk-overlap-tokens: 50
+  min-chunk-length-tokens: 100
+
+logging:
+  level:
+    com.production.lucene_service: DEBUG
+    org.apache.lucene: INFO
+    org.apache.pdfbox: WARN
