@@ -16,27 +16,28 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Exports chunks as structured JSON files for offline embedding generation.
  *
- * Strategy: Per-document export files.
+ * Strategy: One timestamp-based file per API request.
  *
- * Each document ingestion creates/overwrites a file: {export-path}/doc_{documentId}.json
- * This approach is production-ready because:
- *   - No need to read/parse existing files for appending (O(1) per ingestion)
- *   - Re-ingesting a document overwrites only that document's export (idempotent)
- *   - Deleting a document can also remove its export file
- *   - Merging into a single file is available via mergeAllChunks() for Kaggle upload
- *   - Each file is a valid JSON array, independently usable
+ * Each ingestion API call produces a single file:
+ *   {export-path}/2026-02-12T18-45-30.json
  *
- * For Kaggle: call GET /api/v1/ingest/export/merge to produce a single all_chunks.json
+ * All chunks from that request (regardless of how many documents)
+ * are written into one JSON array using Jackson streaming for memory efficiency.
  */
 @Service
 @Slf4j
 public class ChunkExportService {
+
+    private static final DateTimeFormatter FILE_NAME_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH-mm-ss");
 
     private final AppConfig appConfig;
     private final ObjectMapper objectMapper;
@@ -64,96 +65,42 @@ public class ChunkExportService {
     }
 
     /**
-     * Exports chunks for a single document as a per-document JSON file.
-     * File: {export-path}/doc_{documentId}.json
+     * Exports all chunks from a single API request into one timestamp-based JSON file.
+     * Uses Jackson streaming (JsonGenerator) to avoid loading all chunks into memory.
      *
-     * If the file already exists (re-ingestion), it is overwritten.
-     * This is intentional - re-ingesting should produce fresh export data.
+     * @param chunks         all chunks generated during this API request
+     * @param sourceFileName the original uploaded file name (e.g., "paper.pdf")
      */
-    public void exportChunks(List<Chunk> chunks, String documentId, String sourceFileName) {
+    public void exportChunks(List<Chunk> chunks, String sourceFileName) {
         if (!appConfig.getRag().getExport().isEnabled()) {
             return;
         }
 
-        Path outputFile = exportDir.resolve("doc_" + sanitizeFileName(documentId) + ".json");
+        String timestamp = LocalDateTime.now().format(FILE_NAME_FORMATTER);
+        Path outputFile = exportDir.resolve(timestamp + ".json");
 
-        try {
-            List<ChunkExportDTO> dtos = chunks.stream()
-                    .map(chunk -> ChunkExportDTO.fromChunk(chunk, sourceFileName))
-                    .toList();
-
-            objectMapper.writeValue(outputFile.toFile(), dtos);
-
-            log.info("Exported {} chunks for document '{}' to {}",
-                    chunks.size(), documentId, outputFile.toAbsolutePath());
-
-        } catch (IOException e) {
-            log.error("Failed to export chunks for document '{}': {}", documentId, e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Merges all per-document export files into a single all_chunks.json.
-     * Uses Jackson streaming (JsonGenerator) to avoid loading everything into memory.
-     *
-     * Output: {export-path}/all_chunks.json
-     *
-     * @return number of total chunks written, or -1 on failure
-     */
-    public long mergeAllChunks() throws IOException {
-        if (!appConfig.getRag().getExport().isEnabled()) {
-            throw new IllegalStateException("Chunk export is disabled");
-        }
-
-        Path mergedFile = exportDir.resolve("all_chunks.json");
-        long totalChunks = 0;
-
-        try (OutputStream os = Files.newOutputStream(mergedFile);
+        try (OutputStream os = Files.newOutputStream(outputFile);
              JsonGenerator generator = objectMapper.getFactory().createGenerator(os)) {
 
             generator.useDefaultPrettyPrinter();
             generator.writeStartArray();
 
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(exportDir, "doc_*.json")) {
-                for (Path docFile : stream) {
-                    log.debug("Merging: {}", docFile.getFileName());
-
-                    ChunkExportDTO[] docChunks = objectMapper.readValue(docFile.toFile(), ChunkExportDTO[].class);
-                    for (ChunkExportDTO chunk : docChunks) {
-                        generator.writeObject(chunk);
-                        totalChunks++;
-                    }
-                }
+            for (Chunk chunk : chunks) {
+                ChunkExportDTO dto = ChunkExportDTO.fromChunk(chunk, sourceFileName);
+                generator.writeObject(dto);
             }
 
             generator.writeEndArray();
-        }
 
-        log.info("Merged {} total chunks into {}", totalChunks, mergedFile.toAbsolutePath());
-        return totalChunks;
-    }
+            log.info("Exported {} chunks to {}", chunks.size(), outputFile.toAbsolutePath());
 
-    /**
-     * Deletes the export file for a specific document.
-     * Called when a document is deleted from the index.
-     */
-    public void deleteExport(String documentId) {
-        if (!appConfig.getRag().getExport().isEnabled()) {
-            return;
-        }
-
-        Path exportFile = exportDir.resolve("doc_" + sanitizeFileName(documentId) + ".json");
-        try {
-            if (Files.deleteIfExists(exportFile)) {
-                log.info("Deleted export file for document: {}", documentId);
-            }
         } catch (IOException e) {
-            log.error("Failed to delete export file for document '{}': {}", documentId, e.getMessage(), e);
+            log.error("Failed to export chunks to {}: {}", outputFile, e.getMessage(), e);
         }
     }
 
     /**
-     * Returns export statistics.
+     * Returns export statistics: file count, total size, export path.
      */
     public Map<String, Object> getExportStats() throws IOException {
         if (!appConfig.getRag().getExport().isEnabled()) {
@@ -163,29 +110,18 @@ public class ChunkExportService {
         long fileCount = 0;
         long totalSizeBytes = 0;
 
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(exportDir, "doc_*.json")) {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(exportDir, "*.json")) {
             for (Path file : stream) {
                 fileCount++;
                 totalSizeBytes += Files.size(file);
             }
         }
 
-        Path mergedFile = exportDir.resolve("all_chunks.json");
-        boolean mergedExists = Files.exists(mergedFile);
-
         return Map.of(
                 "enabled", true,
                 "exportPath", exportDir.toAbsolutePath().toString(),
-                "documentExports", fileCount,
-                "totalExportSizeMB", String.format("%.2f", totalSizeBytes / (1024.0 * 1024.0)),
-                "mergedFileExists", mergedExists,
-                "mergedFileSizeMB", mergedExists
-                        ? String.format("%.2f", Files.size(mergedFile) / (1024.0 * 1024.0))
-                        : "0.00"
+                "exportFiles", fileCount,
+                "totalExportSizeMB", String.format("%.2f", totalSizeBytes / (1024.0 * 1024.0))
         );
-    }
-
-    private String sanitizeFileName(String name) {
-        return name.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 }

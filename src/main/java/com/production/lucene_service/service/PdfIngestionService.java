@@ -69,10 +69,10 @@ public class PdfIngestionService {
             luceneIndexService.indexChunks(chunks);
             log.info("Indexed {} chunks in Lucene", chunks.size());
 
-            // Step 5: Export chunks as JSON (for offline embedding generation)
+            // Step 5: Export chunks as JSON (one timestamp-based file per request)
             String sourceFileName = file.getOriginalFilename() != null
                     ? file.getOriginalFilename() : "unknown.pdf";
-            chunkExportService.exportChunks(chunks, documentId, sourceFileName);
+            chunkExportService.exportChunks(chunks, sourceFileName);
 
             // Calculate statistics
             int totalTokens = chunks.stream()
@@ -142,7 +142,6 @@ public class PdfIngestionService {
     public void deleteDocument(String documentId) throws IOException {
         log.info("Deleting document from index: {}", documentId);
         luceneIndexService.deleteByDocumentId(documentId);
-        chunkExportService.deleteExport(documentId);
     }
 
     public long getIndexedDocumentCount() throws IOException {
