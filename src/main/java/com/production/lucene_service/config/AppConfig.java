@@ -13,6 +13,7 @@ public class AppConfig {
 
     private Lucene lucene = new Lucene();
     private Chunking chunking = new Chunking();
+    private Rag rag = new Rag();
 
     @Getter
     @Setter
@@ -36,5 +37,18 @@ public class AppConfig {
         private int chunkSizeTokens = 400;
         private int chunkOverlapTokens = 50;
         private int minChunkLengthTokens = 100;
+    }
+
+    @Getter
+    @Setter
+    public static class Rag {
+        private Export export = new Export();
+
+        @Getter
+        @Setter
+        public static class Export {
+            private boolean enabled = true;
+            private String path = "./chunk-exports";
+        }
     }
 }

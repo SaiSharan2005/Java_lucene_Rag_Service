@@ -22,6 +22,11 @@ chunking:
   chunk-overlap-tokens: 50
   min-chunk-length-tokens: 100
 
+rag:
+  export:
+    enabled: true
+    path: ./chunk-exports
+
 logging:
   level:
     com.production.lucene_service: DEBUG

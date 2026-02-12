@@ -24,13 +24,16 @@ public class PdfIngestionService {
     private final TextCleaningService textCleaningService;
     private final ChunkingService chunkingService;
     private final LuceneIndexService luceneIndexService;
+    private final ChunkExportService chunkExportService;
 
     public PdfIngestionService(TextCleaningService textCleaningService,
                                ChunkingService chunkingService,
-                               LuceneIndexService luceneIndexService) {
+                               LuceneIndexService luceneIndexService,
+                               ChunkExportService chunkExportService) {
         this.textCleaningService = textCleaningService;
         this.chunkingService = chunkingService;
         this.luceneIndexService = luceneIndexService;
+        this.chunkExportService = chunkExportService;
     }
 
     public IngestionResponse ingestPdf(MultipartFile file, String documentId) {
@@ -65,6 +68,11 @@ public class PdfIngestionService {
             // Step 4: Index chunks in Lucene
             luceneIndexService.indexChunks(chunks);
             log.info("Indexed {} chunks in Lucene", chunks.size());
+
+            // Step 5: Export chunks as JSON (for offline embedding generation)
+            String sourceFileName = file.getOriginalFilename() != null
+                    ? file.getOriginalFilename() : "unknown.pdf";
+            chunkExportService.exportChunks(chunks, documentId, sourceFileName);
 
             // Calculate statistics
             int totalTokens = chunks.stream()
@@ -134,6 +142,7 @@ public class PdfIngestionService {
     public void deleteDocument(String documentId) throws IOException {
         log.info("Deleting document from index: {}", documentId);
         luceneIndexService.deleteByDocumentId(documentId);
+        chunkExportService.deleteExport(documentId);
     }
 
     public long getIndexedDocumentCount() throws IOException {

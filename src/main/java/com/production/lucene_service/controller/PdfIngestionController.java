@@ -2,6 +2,7 @@ package com.production.lucene_service.controller;
 
 import com.production.lucene_service.model.IngestionResponse;
 import com.production.lucene_service.model.IngestionStatus;
+import com.production.lucene_service.service.ChunkExportService;
 import com.production.lucene_service.service.PdfIngestionService;
 import jakarta.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
@@ -21,9 +22,12 @@ import java.util.Map;
 public class PdfIngestionController {
 
     private final PdfIngestionService pdfIngestionService;
+    private final ChunkExportService chunkExportService;
 
-    public PdfIngestionController(PdfIngestionService pdfIngestionService) {
+    public PdfIngestionController(PdfIngestionService pdfIngestionService,
+                                  ChunkExportService chunkExportService) {
         this.pdfIngestionService = pdfIngestionService;
+        this.chunkExportService = chunkExportService;
     }
 
     @PostMapping(value = "/pdf", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -96,6 +100,44 @@ public class PdfIngestionController {
             ));
         } catch (IOException e) {
             log.error("Failed to get stats", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "status", "error",
+                    "message", e.getMessage()
+            ));
+        }
+    }
+
+    @PostMapping("/export/merge")
+    public ResponseEntity<Map<String, Object>> mergeExports() {
+        log.info("Received request to merge all chunk exports");
+
+        try {
+            long totalChunks = chunkExportService.mergeAllChunks();
+            return ResponseEntity.ok(Map.of(
+                    "status", "success",
+                    "message", "All chunks merged into all_chunks.json",
+                    "totalChunks", totalChunks
+            ));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "status", "error",
+                    "message", e.getMessage()
+            ));
+        } catch (IOException e) {
+            log.error("Failed to merge exports", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "status", "error",
+                    "message", "Failed to merge exports: " + e.getMessage()
+            ));
+        }
+    }
+
+    @GetMapping("/export/stats")
+    public ResponseEntity<Map<String, Object>> getExportStats() {
+        try {
+            return ResponseEntity.ok(chunkExportService.getExportStats());
+        } catch (IOException e) {
+            log.error("Failed to get export stats", e);
             return ResponseEntity.internalServerError().body(Map.of(
                     "status", "error",
                     "message", e.getMessage()
