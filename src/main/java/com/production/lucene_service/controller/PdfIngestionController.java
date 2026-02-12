@@ -1,12 +1,11 @@
 package com.production.lucene_service.controller;
 
-import com.production.lucene_service.model.Chunk;
 import com.production.lucene_service.model.IngestionResponse;
-import com.production.lucene_service.model.IngestionResponse.DocumentDetail;
 import com.production.lucene_service.model.IngestionStatus;
-import com.production.lucene_service.service.ChunkExportService;
+import com.production.lucene_service.model.JobStatus;
+import com.production.lucene_service.service.IngestionJobService;
+import com.production.lucene_service.service.IngestionJobService.PendingFile;
 import com.production.lucene_service.service.PdfIngestionService;
-import com.production.lucene_service.service.PdfIngestionService.IngestionResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -14,32 +13,36 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.util.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
- * Orchestrates PDF ingestion: validates files, delegates processing to PdfIngestionService,
- * collects all chunks across files, then calls ChunkExportService once per request.
+ * Validates uploaded files, saves them to temp storage, and submits
+ * a background ingestion job. Returns jobId immediately (non-blocking).
+ *
+ * Does NOT perform chunking, indexing, or export — that is IngestionJobService's job.
  */
 @RestController
 @RequestMapping("/api/v1/ingest")
 @Slf4j
 public class PdfIngestionController {
 
+    private final IngestionJobService ingestionJobService;
     private final PdfIngestionService pdfIngestionService;
-    private final ChunkExportService chunkExportService;
 
-    public PdfIngestionController(PdfIngestionService pdfIngestionService,
-                                  ChunkExportService chunkExportService) {
+    public PdfIngestionController(IngestionJobService ingestionJobService,
+                                  PdfIngestionService pdfIngestionService) {
+        this.ingestionJobService = ingestionJobService;
         this.pdfIngestionService = pdfIngestionService;
-        this.chunkExportService = chunkExportService;
     }
 
     @PostMapping(value = "/pdf", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<IngestionResponse> ingestPdf(
-            @RequestPart("file") MultipartFile[] files,
-            @RequestPart(value = "documentId", required = false) String documentId) {
-
-        long startTime = System.currentTimeMillis();
+            @RequestPart("file") MultipartFile[] files) {
 
         log.info("Received PDF ingestion request - {} file(s)", files.length);
 
@@ -52,7 +55,7 @@ public class PdfIngestionController {
                             .build());
         }
 
-        // Validate all files before processing any
+        // Validate all files before saving any
         for (MultipartFile file : files) {
             if (file.isEmpty()) {
                 return ResponseEntity.badRequest()
@@ -73,68 +76,57 @@ public class PdfIngestionController {
             }
         }
 
-        // Process each file, collect all chunks
-        List<Chunk> allChunks = new ArrayList<>();
-        List<DocumentDetail> documentDetails = new ArrayList<>();
-        Map<String, String> chunkSourceMap = new LinkedHashMap<>();
-        int totalPages = 0;
-        int totalTokens = 0;
+        // Save files to temp directory (MultipartFile is request-scoped — won't survive async)
+        Path tempDir = null;
+        List<PendingFile> pendingFiles = new ArrayList<>();
 
-        for (int i = 0; i < files.length; i++) {
-            MultipartFile file = files[i];
-            // Use provided documentId only for single-file requests; generate for multi-file
-            String docId = (files.length == 1 && documentId != null && !documentId.trim().isEmpty())
-                    ? documentId : null;
+        try {
+            tempDir = Files.createTempDirectory("ingest-");
 
-            try {
-                IngestionResult result = pdfIngestionService.ingestPdf(file, docId);
-
-                allChunks.addAll(result.chunks());
-                chunkSourceMap.put(result.documentId(), result.fileName());
-                totalPages += result.totalPages();
-                totalTokens += result.totalTokens();
-
-                documentDetails.add(DocumentDetail.builder()
-                        .documentId(result.documentId())
-                        .fileName(result.fileName())
-                        .chunks(result.chunks().size())
-                        .pages(result.totalPages())
-                        .tokens(result.totalTokens())
-                        .build());
-
-            } catch (IOException e) {
-                log.error("Failed to ingest file: {}", file.getOriginalFilename(), e);
-                return ResponseEntity.internalServerError()
-                        .body(IngestionResponse.builder()
-                                .status(IngestionStatus.FAILED)
-                                .message("Failed to ingest '" + file.getOriginalFilename()
-                                        + "': " + e.getMessage())
-                                .documentsProcessed(documentDetails.size())
-                                .documents(documentDetails)
-                                .processingTimeMs(System.currentTimeMillis() - startTime)
-                                .build());
+            for (MultipartFile file : files) {
+                Path tempPath = tempDir.resolve(UUID.randomUUID() + ".pdf");
+                file.transferTo(tempPath.toFile());
+                pendingFiles.add(new PendingFile(tempPath, file.getOriginalFilename()));
             }
+
+        } catch (IOException e) {
+            log.error("Failed to save uploaded files to temp directory", e);
+
+            // Clean up any files already saved
+            cleanupTempFiles(pendingFiles, tempDir);
+
+            return ResponseEntity.internalServerError()
+                    .body(IngestionResponse.builder()
+                            .status(IngestionStatus.FAILED)
+                            .message("Failed to prepare files for processing: " + e.getMessage())
+                            .build());
         }
 
-        // Export all chunks once for this entire request
-        String exportFileName = chunkExportService.exportChunks(allChunks, chunkSourceMap);
+        // Submit background job — returns immediately
+        String jobId = ingestionJobService.startJob(pendingFiles);
 
-        long processingTime = System.currentTimeMillis() - startTime;
+        log.info("Submitted ingestion job {} for {} files", jobId, files.length);
 
-        log.info("Completed ingestion - {} documents, {} chunks, {} tokens, export: {} in {}ms",
-                documentDetails.size(), allChunks.size(), totalTokens, exportFileName, processingTime);
+        return ResponseEntity.accepted()
+                .body(IngestionResponse.builder()
+                        .jobId(jobId)
+                        .status(IngestionStatus.PROCESSING)
+                        .message(files.length + " file(s) submitted for background processing")
+                        .build());
+    }
 
-        return ResponseEntity.ok(IngestionResponse.builder()
-                .status(IngestionStatus.SUCCESS)
-                .message(documentDetails.size() + " document(s) ingested successfully")
-                .documentsProcessed(documentDetails.size())
-                .totalChunks(allChunks.size())
-                .totalTokens(totalTokens)
-                .totalPages(totalPages)
-                .exportFileName(exportFileName)
-                .processingTimeMs(processingTime)
-                .documents(documentDetails)
-                .build());
+    @GetMapping("/status/{jobId}")
+    public ResponseEntity<?> getJobStatus(@PathVariable String jobId) {
+        JobStatus status = ingestionJobService.getJobStatus(jobId);
+
+        if (status == null) {
+            return ResponseEntity.status(404).body(Map.of(
+                    "error", "Job not found",
+                    "jobId", jobId
+            ));
+        }
+
+        return ResponseEntity.ok(status);
     }
 
     @DeleteMapping("/document/{documentId}")
@@ -178,5 +170,14 @@ public class PdfIngestionController {
     @GetMapping("/health")
     public ResponseEntity<Map<String, String>> health() {
         return ResponseEntity.ok(Map.of("status", "UP"));
+    }
+
+    private void cleanupTempFiles(List<PendingFile> files, Path tempDir) {
+        for (PendingFile pf : files) {
+            try { Files.deleteIfExists(pf.tempPath()); } catch (IOException ignored) {}
+        }
+        if (tempDir != null) {
+            try { Files.deleteIfExists(tempDir); } catch (IOException ignored) {}
+        }
     }
 }
