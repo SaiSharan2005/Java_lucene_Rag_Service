@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.file.DirectoryStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -22,22 +22,20 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Exports chunks as structured JSON files for offline embedding generation.
+ * Exports chunks as a single timestamp-based JSON file per API request.
  *
- * Strategy: One timestamp-based file per API request.
+ * Each ingestion API call produces one file:
+ *   {export-path}/2026-02-12T18-45-30-123.json
  *
- * Each ingestion API call produces a single file:
- *   {export-path}/2026-02-12T18-45-30.json
- *
- * All chunks from that request (regardless of how many documents)
- * are written into one JSON array using Jackson streaming for memory efficiency.
+ * Uses Jackson JsonGenerator (streaming) for memory-efficient writing.
+ * Millisecond precision in filenames prevents collisions under concurrent requests.
  */
 @Service
 @Slf4j
 public class ChunkExportService {
 
     private static final DateTimeFormatter FILE_NAME_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH-mm-ss");
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH-mm-ss-SSS");
 
     private final AppConfig appConfig;
     private final ObjectMapper objectMapper;
@@ -66,62 +64,46 @@ public class ChunkExportService {
 
     /**
      * Exports all chunks from a single API request into one timestamp-based JSON file.
-     * Uses Jackson streaming (JsonGenerator) to avoid loading all chunks into memory.
+     * Supports multiple documents — each chunk carries its own source filename via the mapping.
      *
-     * @param chunks         all chunks generated during this API request
-     * @param sourceFileName the original uploaded file name (e.g., "paper.pdf")
+     * @param chunks          all chunks generated during this API request
+     * @param chunkSourceMap  maps documentId → source filename (e.g., "abc123" → "paper.pdf")
+     * @return the generated filename (e.g., "2026-02-12T18-45-30-123.json"), or null if export disabled
      */
-    public void exportChunks(List<Chunk> chunks, String sourceFileName) {
+    public String exportChunks(List<Chunk> chunks, Map<String, String> chunkSourceMap) {
         if (!appConfig.getRag().getExport().isEnabled()) {
-            return;
+            return null;
         }
 
         String timestamp = LocalDateTime.now().format(FILE_NAME_FORMATTER);
-        Path outputFile = exportDir.resolve(timestamp + ".json");
+        String fileName = timestamp + ".json";
+        Path outputFile = exportDir.resolve(fileName);
 
         try (OutputStream os = Files.newOutputStream(outputFile);
-             JsonGenerator generator = objectMapper.getFactory().createGenerator(os)) {
+             JsonGenerator generator = objectMapper.getFactory()
+                     .createGenerator(os, com.fasterxml.jackson.core.JsonEncoding.UTF8)) {
 
             generator.useDefaultPrettyPrinter();
             generator.writeStartArray();
 
             for (Chunk chunk : chunks) {
-                ChunkExportDTO dto = ChunkExportDTO.fromChunk(chunk, sourceFileName);
+                String source = chunkSourceMap.getOrDefault(chunk.getDocumentId(), "unknown.pdf");
+                ChunkExportDTO dto = ChunkExportDTO.fromChunk(chunk, source);
                 generator.writeObject(dto);
             }
 
             generator.writeEndArray();
 
             log.info("Exported {} chunks to {}", chunks.size(), outputFile.toAbsolutePath());
+            return fileName;
 
         } catch (IOException e) {
             log.error("Failed to export chunks to {}: {}", outputFile, e.getMessage(), e);
+            return null;
         }
     }
 
-    /**
-     * Returns export statistics: file count, total size, export path.
-     */
-    public Map<String, Object> getExportStats() throws IOException {
-        if (!appConfig.getRag().getExport().isEnabled()) {
-            return Map.of("enabled", false);
-        }
-
-        long fileCount = 0;
-        long totalSizeBytes = 0;
-
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(exportDir, "*.json")) {
-            for (Path file : stream) {
-                fileCount++;
-                totalSizeBytes += Files.size(file);
-            }
-        }
-
-        return Map.of(
-                "enabled", true,
-                "exportPath", exportDir.toAbsolutePath().toString(),
-                "exportFiles", fileCount,
-                "totalExportSizeMB", String.format("%.2f", totalSizeBytes / (1024.0 * 1024.0))
-        );
+    public boolean isEnabled() {
+        return appConfig.getRag().getExport().isEnabled();
     }
 }

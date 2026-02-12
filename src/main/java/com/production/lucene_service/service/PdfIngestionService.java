@@ -2,8 +2,6 @@ package com.production.lucene_service.service;
 
 import com.production.lucene_service.lucene.LuceneIndexService;
 import com.production.lucene_service.model.Chunk;
-import com.production.lucene_service.model.IngestionResponse;
-import com.production.lucene_service.model.IngestionStatus;
 import com.production.lucene_service.model.PageContent;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
@@ -17,6 +15,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Handles PDF processing: text extraction, cleaning, chunking, and Lucene indexing.
+ * Does NOT handle JSON export — that responsibility belongs to the controller layer.
+ */
 @Service
 @Slf4j
 public class PdfIngestionService {
@@ -24,91 +26,54 @@ public class PdfIngestionService {
     private final TextCleaningService textCleaningService;
     private final ChunkingService chunkingService;
     private final LuceneIndexService luceneIndexService;
-    private final ChunkExportService chunkExportService;
 
     public PdfIngestionService(TextCleaningService textCleaningService,
                                ChunkingService chunkingService,
-                               LuceneIndexService luceneIndexService,
-                               ChunkExportService chunkExportService) {
+                               LuceneIndexService luceneIndexService) {
         this.textCleaningService = textCleaningService;
         this.chunkingService = chunkingService;
         this.luceneIndexService = luceneIndexService;
-        this.chunkExportService = chunkExportService;
     }
 
-    public IngestionResponse ingestPdf(MultipartFile file, String documentId) {
-        long startTime = System.currentTimeMillis();
-
+    /**
+     * Processes a single PDF: extract text, clean, chunk, and index into Lucene.
+     *
+     * @return the generated chunks (already indexed in Lucene)
+     */
+    public IngestionResult ingestPdf(MultipartFile file, String documentId) throws IOException {
         // Generate document ID if not provided
         if (documentId == null || documentId.trim().isEmpty()) {
             documentId = UUID.randomUUID().toString();
         }
 
-        log.info("Starting PDF ingestion for document: {} (file: {})",
-                documentId, file.getOriginalFilename());
+        String fileName = file.getOriginalFilename() != null
+                ? file.getOriginalFilename() : "unknown.pdf";
 
-        try {
-            // Step 1: Extract text from PDF
-            List<PageContent> pages = extractTextFromPdf(file);
-            log.info("Extracted {} pages from PDF", pages.size());
+        log.info("Starting PDF ingestion for document: {} (file: {})", documentId, fileName);
 
-            // Step 2: Clean text for each page
-            List<String> cleanedTexts = new ArrayList<>();
-            for (PageContent page : pages) {
-                String cleanedText = textCleaningService.fullClean(page.getRawText());
-                page.setCleanedText(cleanedText);
-                cleanedTexts.add(cleanedText);
-            }
-            log.info("Cleaned text for {} pages", cleanedTexts.size());
+        // Step 1: Extract text from PDF
+        List<PageContent> pages = extractTextFromPdf(file);
+        log.info("Extracted {} pages from PDF", pages.size());
 
-            // Step 3: Chunk the document
-            List<Chunk> chunks = chunkingService.chunkDocument(cleanedTexts, documentId);
-            log.info("Created {} chunks from document", chunks.size());
-
-            // Step 4: Index chunks in Lucene
-            luceneIndexService.indexChunks(chunks);
-            log.info("Indexed {} chunks in Lucene", chunks.size());
-
-            // Step 5: Export chunks as JSON (one timestamp-based file per request)
-            String sourceFileName = file.getOriginalFilename() != null
-                    ? file.getOriginalFilename() : "unknown.pdf";
-            chunkExportService.exportChunks(chunks, sourceFileName);
-
-            // Calculate statistics
-            int totalTokens = chunks.stream()
-                    .mapToInt(Chunk::getTokenCount)
-                    .sum();
-
-            long processingTime = System.currentTimeMillis() - startTime;
-
-            log.info("Completed ingestion for document: {} - {} pages, {} chunks, {} tokens in {}ms",
-                    documentId, pages.size(), chunks.size(), totalTokens, processingTime);
-
-            return IngestionResponse.builder()
-                    .documentId(documentId)
-                    .status(IngestionStatus.SUCCESS)
-                    .message("Document ingested successfully")
-                    .totalPages(pages.size())
-                    .totalChunks(chunks.size())
-                    .totalTokens(totalTokens)
-                    .processingTimeMs(processingTime)
-                    .build();
-
-        } catch (Exception e) {
-            log.error("Failed to ingest PDF document: {}", documentId, e);
-
-            long processingTime = System.currentTimeMillis() - startTime;
-
-            return IngestionResponse.builder()
-                    .documentId(documentId)
-                    .status(IngestionStatus.FAILED)
-                    .message("Ingestion failed: " + e.getMessage())
-                    .totalPages(0)
-                    .totalChunks(0)
-                    .totalTokens(0)
-                    .processingTimeMs(processingTime)
-                    .build();
+        // Step 2: Clean text for each page
+        List<String> cleanedTexts = new ArrayList<>();
+        for (PageContent page : pages) {
+            String cleanedText = textCleaningService.fullClean(page.getRawText());
+            page.setCleanedText(cleanedText);
+            cleanedTexts.add(cleanedText);
         }
+
+        // Step 3: Chunk the document
+        List<Chunk> chunks = chunkingService.chunkDocument(cleanedTexts, documentId);
+        log.info("Created {} chunks from document", chunks.size());
+
+        // Step 4: Index chunks in Lucene
+        luceneIndexService.indexChunks(chunks);
+        log.info("Indexed {} chunks in Lucene for document: {}", chunks.size(), documentId);
+
+        int totalTokens = chunks.stream().mapToInt(Chunk::getTokenCount).sum();
+
+        return new IngestionResult(documentId, fileName, pages.size(), chunks, totalTokens);
     }
 
     private List<PageContent> extractTextFromPdf(MultipartFile file) throws IOException {
@@ -124,15 +89,12 @@ public class PdfIngestionService {
 
                 String rawText = stripper.getText(document);
 
-                PageContent pageContent = PageContent.builder()
+                pages.add(PageContent.builder()
                         .pageNumber(pageNum)
                         .rawText(rawText)
-                        .build();
+                        .build());
 
-                pages.add(pageContent);
-
-                log.debug("Extracted page {}/{}: {} characters",
-                        pageNum, totalPages, rawText.length());
+                log.debug("Extracted page {}/{}: {} characters", pageNum, totalPages, rawText.length());
             }
         }
 
@@ -147,4 +109,15 @@ public class PdfIngestionService {
     public long getIndexedDocumentCount() throws IOException {
         return luceneIndexService.getDocumentCount();
     }
+
+    /**
+     * Result of ingesting a single PDF. Carries chunks + metadata back to the controller.
+     */
+    public record IngestionResult(
+            String documentId,
+            String fileName,
+            int totalPages,
+            List<Chunk> chunks,
+            int totalTokens
+    ) {}
 }
