@@ -138,7 +138,7 @@ public class IngestionJobService {
                     // Stream each chunk to JSON immediately — no cross-file accumulation
                     if (generator != null) {
                         for (Chunk chunk : result.chunks()) {
-                            ChunkExportDTO dto = ChunkExportDTO.fromChunk(chunk, result.fileName());
+                            ChunkExportDTO dto = ChunkExportDTO.fromChunk(chunk, result);
                             generator.writeObject(dto);
                         }
                     }

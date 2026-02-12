@@ -49,12 +49,25 @@ public class PdfIngestionService {
 
         log.info("Starting PDF ingestion for document: {} (file: {})", documentId, fileName);
 
-        // Step 1: Extract text from PDF
-        List<PageContent> pages = extractTextFromPdf(filePath);
-        log.info("Extracted {} pages from PDF", pages.size());
+        // Step 1: Extract text and PDF metadata
+        String title = null;
+        String author = null;
+        List<PageContent> pages;
+
+        try (PDDocument document = Loader.loadPDF(filePath.toFile())) {
+            var info = document.getDocumentInformation();
+            if (info != null) {
+                title = info.getTitle();
+                author = info.getAuthor();
+            }
+            pages = new ArrayList<>();
+            extractPages(document, pages);
+        }
+
+        log.info("Extracted {} pages from PDF (title: {}, author: {})", pages.size(), title, author);
 
         // Step 2-4: common processing
-        return processPages(pages, documentId, fileName);
+        return processPages(pages, documentId, fileName, title, author);
     }
 
     /**
@@ -71,19 +84,32 @@ public class PdfIngestionService {
 
         log.info("Starting PDF ingestion for document: {} (file: {})", documentId, fileName);
 
-        // Step 1: Extract text from PDF
-        List<PageContent> pages = extractTextFromPdf(file);
-        log.info("Extracted {} pages from PDF", pages.size());
+        // Step 1: Extract text and PDF metadata
+        String title = null;
+        String author = null;
+        List<PageContent> pages;
+
+        try (PDDocument document = Loader.loadPDF(file.getBytes())) {
+            var info = document.getDocumentInformation();
+            if (info != null) {
+                title = info.getTitle();
+                author = info.getAuthor();
+            }
+            pages = new ArrayList<>();
+            extractPages(document, pages);
+        }
+
+        log.info("Extracted {} pages from PDF (title: {}, author: {})", pages.size(), title, author);
 
         // Step 2-4: common processing
-        return processPages(pages, documentId, fileName);
+        return processPages(pages, documentId, fileName, title, author);
     }
 
     /**
      * Common processing pipeline: clean → chunk → index.
      */
-    private IngestionResult processPages(List<PageContent> pages, String documentId, String fileName)
-            throws IOException {
+    private IngestionResult processPages(List<PageContent> pages, String documentId, String fileName,
+                                         String title, String author) throws IOException {
 
         // Step 2: Clean text for each page
         List<String> cleanedTexts = new ArrayList<>();
@@ -103,27 +129,7 @@ public class PdfIngestionService {
 
         int totalTokens = chunks.stream().mapToInt(Chunk::getTokenCount).sum();
 
-        return new IngestionResult(documentId, fileName, pages.size(), chunks, totalTokens);
-    }
-
-    private List<PageContent> extractTextFromPdf(Path filePath) throws IOException {
-        List<PageContent> pages = new ArrayList<>();
-
-        try (PDDocument document = Loader.loadPDF(filePath.toFile())) {
-            extractPages(document, pages);
-        }
-
-        return pages;
-    }
-
-    private List<PageContent> extractTextFromPdf(MultipartFile file) throws IOException {
-        List<PageContent> pages = new ArrayList<>();
-
-        try (PDDocument document = Loader.loadPDF(file.getBytes())) {
-            extractPages(document, pages);
-        }
-
-        return pages;
+        return new IngestionResult(documentId, fileName, pages.size(), chunks, totalTokens, title, author);
     }
 
     private void extractPages(PDDocument document, List<PageContent> pages) throws IOException {
@@ -162,6 +168,8 @@ public class PdfIngestionService {
             String fileName,
             int totalPages,
             List<Chunk> chunks,
-            int totalTokens
+            int totalTokens,
+            String title,
+            String author
     ) {}
 }
