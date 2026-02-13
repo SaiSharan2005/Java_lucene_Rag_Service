@@ -14,7 +14,7 @@ import com.production.lucene_service.repository.ProcessedDocumentRepository;
 import com.production.lucene_service.service.PdfIngestionService.IngestionResult;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -27,6 +27,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 /**
  * Manages asynchronous PDF ingestion jobs.
@@ -52,16 +53,19 @@ public class IngestionJobService {
     private final AppConfig appConfig;
     private final ObjectMapper objectMapper;
     private final ProcessedDocumentRepository documentRepository;
+    private final Executor ingestionExecutor;
 
     private Path exportDir;
     private boolean exportEnabled;
 
     public IngestionJobService(PdfIngestionService pdfIngestionService,
                                AppConfig appConfig,
-                               ProcessedDocumentRepository documentRepository) {
+                               ProcessedDocumentRepository documentRepository,
+                               @Qualifier("ingestionExecutor") Executor ingestionExecutor) {
         this.pdfIngestionService = pdfIngestionService;
         this.appConfig = appConfig;
         this.documentRepository = documentRepository;
+        this.ingestionExecutor = ingestionExecutor;
         this.objectMapper = new ObjectMapper();
         this.objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
     }
@@ -93,7 +97,7 @@ public class IngestionJobService {
 
         log.info("[{}] Job created — {} files queued", jobId, files.size());
 
-        processJob(jobId, files);
+        ingestionExecutor.execute(() -> processJob(jobId, files));
 
         return jobId;
     }
@@ -108,9 +112,10 @@ public class IngestionJobService {
      * Memory guarantee: only one PDF's chunks exist in memory at any time.
      * The chunk list from each IngestionResult is written to the JsonGenerator
      * and becomes eligible for GC before the next file is processed.
+     *
+     * Called via injected executor (not @Async) to avoid self-invocation proxy bypass.
      */
-    @Async("ingestionExecutor")
-    public void processJob(String jobId, List<PendingFile> files) {
+    private void processJob(String jobId, List<PendingFile> files) {
         JobStatus status = jobs.get(jobId);
         int totalFiles = files.size();
         int filesProcessed = 0;

@@ -20,8 +20,11 @@ public class AsyncConfig {
         executor.setMaxPoolSize(2);
         executor.setQueueCapacity(10);
         executor.setThreadNamePrefix("ingest-job-");
-        executor.setRejectedExecutionHandler((runnable, pool) ->
-                log.warn("Ingestion job rejected - queue full. Max concurrent: 2, queue: 10"));
+        executor.setRejectedExecutionHandler((runnable, pool) -> {
+                log.warn("Ingestion job rejected - queue full. Max concurrent: 2, queue: 10");
+                throw new java.util.concurrent.RejectedExecutionException(
+                        "Ingestion queue full (max concurrent: 2, queue: 10). Try again later.");
+        });
         executor.initialize();
         log.info("Initialized ingestion executor: corePool=2, maxPool=2, queue=10");
         return executor;

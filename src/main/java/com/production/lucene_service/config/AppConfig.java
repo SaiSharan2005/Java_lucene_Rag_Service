@@ -14,6 +14,7 @@ public class AppConfig {
     private Lucene lucene = new Lucene();
     private Chunking chunking = new Chunking();
     private Rag rag = new Rag();
+    private Arxiv arxiv = new Arxiv();
 
     @Getter
     @Setter
@@ -50,5 +51,17 @@ public class AppConfig {
             private boolean enabled = true;
             private String path = "./chunk-exports";
         }
+    }
+
+    @Getter
+    @Setter
+    public static class Arxiv {
+        private int batchSize = 50;
+        private long apiDelayMs = 3000;
+        private long downloadDelayMs = 1000;
+        private int connectTimeoutSeconds = 30;
+        private int readTimeoutSeconds = 120;
+        private int maxRetries = 3;
+        private int maxPapersPerQuery = 50000;
     }
 }

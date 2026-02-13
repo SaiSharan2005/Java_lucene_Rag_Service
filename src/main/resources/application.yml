@@ -40,6 +40,15 @@ rag:
     enabled: true
     path: ./chunk-exports
 
+arxiv:
+  batch-size: 50
+  api-delay-ms: 3000
+  download-delay-ms: 1000
+  connect-timeout-seconds: 30
+  read-timeout-seconds: 120
+  max-retries: 3
+  max-papers-per-query: 50000
+
 logging:
   level:
     com.production.lucene_service: INFO

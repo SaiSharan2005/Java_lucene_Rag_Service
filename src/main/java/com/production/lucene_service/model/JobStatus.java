@@ -14,11 +14,12 @@ public class JobStatus {
     private volatile String status;
     private final AtomicInteger documentsProcessed = new AtomicInteger(0);
     private final AtomicInteger chunksProcessed = new AtomicInteger(0);
+    private final AtomicInteger documentsSkipped = new AtomicInteger(0);
     private volatile String exportFileName;
     private final Instant startTime;
     private volatile Instant endTime;
     private volatile String errorMessage;
-    private final int totalFiles;
+    private volatile int totalFiles;
 
     public JobStatus(String jobId, int totalFiles) {
         this.jobId = jobId;
@@ -54,5 +55,17 @@ public class JobStatus {
 
     public int getChunksProcessed() {
         return chunksProcessed.get();
+    }
+
+    public void setTotalFiles(int totalFiles) {
+        this.totalFiles = totalFiles;
+    }
+
+    public void incrementSkipped() {
+        documentsSkipped.incrementAndGet();
+    }
+
+    public int getDocumentsSkipped() {
+        return documentsSkipped.get();
     }
 }
