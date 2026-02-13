@@ -8,6 +8,9 @@ import com.production.lucene_service.config.AppConfig;
 import com.production.lucene_service.model.Chunk;
 import com.production.lucene_service.model.ChunkExportDTO;
 import com.production.lucene_service.model.JobStatus;
+import com.production.lucene_service.model.ProcessedDocument;
+import com.production.lucene_service.model.ProcessedDocument.DocumentStatus;
+import com.production.lucene_service.repository.ProcessedDocumentRepository;
 import com.production.lucene_service.service.PdfIngestionService.IngestionResult;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *   2. For each PDF: extract → clean → chunk → index into Lucene
  *   3. Writes each chunk to JSON immediately (no List accumulation across files)
  *   4. Updates job status atomically for real-time polling
+ *   5. Tracks each document in H2 database for dedup
  *
  * Memory-safe: only one document's chunks exist in memory at any time.
  */
@@ -47,13 +51,17 @@ public class IngestionJobService {
     private final PdfIngestionService pdfIngestionService;
     private final AppConfig appConfig;
     private final ObjectMapper objectMapper;
+    private final ProcessedDocumentRepository documentRepository;
 
     private Path exportDir;
     private boolean exportEnabled;
 
-    public IngestionJobService(PdfIngestionService pdfIngestionService, AppConfig appConfig) {
+    public IngestionJobService(PdfIngestionService pdfIngestionService,
+                               AppConfig appConfig,
+                               ProcessedDocumentRepository documentRepository) {
         this.pdfIngestionService = pdfIngestionService;
         this.appConfig = appConfig;
+        this.documentRepository = documentRepository;
         this.objectMapper = new ObjectMapper();
         this.objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
     }
@@ -70,9 +78,8 @@ public class IngestionJobService {
         exportDir = Paths.get(appConfig.getRag().getExport().getPath());
         if (!Files.exists(exportDir)) {
             Files.createDirectories(exportDir);
-            log.info("Created chunk export directory: {}", exportDir.toAbsolutePath());
         }
-        log.info("Chunk export enabled. Export path: {}", exportDir.toAbsolutePath());
+        log.info("Chunk export enabled → {}", exportDir.toAbsolutePath());
     }
 
     /**
@@ -84,7 +91,7 @@ public class IngestionJobService {
         JobStatus status = new JobStatus(jobId, files.size());
         jobs.put(jobId, status);
 
-        log.info("Created ingestion job {} for {} files", jobId, files.size());
+        log.info("[{}] Job created — {} files queued", jobId, files.size());
 
         processJob(jobId, files);
 
@@ -105,14 +112,21 @@ public class IngestionJobService {
     @Async("ingestionExecutor")
     public void processJob(String jobId, List<PendingFile> files) {
         JobStatus status = jobs.get(jobId);
-        log.info("[{}] Starting background processing of {} files", jobId, files.size());
+        int totalFiles = files.size();
+        int filesProcessed = 0;
+        int filesFailed = 0;
+        int totalChunks = 0;
+        long jobStartTime = System.currentTimeMillis();
+
+        // Calculate progress interval (log every ~10%, minimum every 10 files)
+        int progressInterval = Math.max(1, Math.min(totalFiles / 10, 10));
 
         String exportFileName = null;
         JsonGenerator generator = null;
         OutputStream outputStream = null;
 
         try {
-            // Setup JSON export stream (opened once, kept open across all files)
+            // Setup JSON export stream
             if (exportEnabled) {
                 String timestamp = LocalDateTime.now().format(FILE_NAME_FORMATTER);
                 exportFileName = timestamp + ".json";
@@ -123,19 +137,33 @@ public class IngestionJobService {
                 generator.useDefaultPrettyPrinter();
                 generator.writeStartArray();
 
-                log.info("[{}] Streaming export to: {}", jobId, exportFile.toAbsolutePath());
+                log.debug("[{}] Export file → {}", jobId, exportFile.toAbsolutePath());
             }
 
             // Process each file sequentially
             for (PendingFile pending : files) {
-                log.info("[{}] Processing file: {}", jobId, pending.originalFileName());
+                log.debug("[{}] Processing: {}", jobId, pending.originalFileName());
+
+                // Save document record with PROCESSING status
+                String documentId = UUID.randomUUID().toString();
+                long fileSizeBytes = 0;
+                try {
+                    fileSizeBytes = Files.size(pending.tempPath());
+                } catch (IOException ignored) {}
+
+                ProcessedDocument doc = ProcessedDocument.builder()
+                        .fileName(pending.originalFileName())
+                        .documentId(documentId)
+                        .status(DocumentStatus.PROCESSING)
+                        .fileSizeBytes(fileSizeBytes)
+                        .build();
+                doc = documentRepository.save(doc);
 
                 try {
-                    // PdfIngestionService handles: extract → clean → chunk → Lucene index
                     IngestionResult result = pdfIngestionService.ingestPdf(
-                            pending.tempPath(), pending.originalFileName(), null);
+                            pending.tempPath(), pending.originalFileName(), documentId);
 
-                    // Stream each chunk to JSON immediately — no cross-file accumulation
+                    // Stream chunks to JSON
                     if (generator != null) {
                         for (Chunk chunk : result.chunks()) {
                             ChunkExportDTO dto = ChunkExportDTO.fromChunk(chunk, result);
@@ -143,18 +171,52 @@ public class IngestionJobService {
                         }
                     }
 
+                    // Update document record
+                    doc.setStatus(DocumentStatus.COMPLETED);
+                    doc.setTotalPages(result.totalPages());
+                    doc.setTotalChunks(result.chunks().size());
+                    doc.setTotalTokens(result.totalTokens());
+                    doc.setTitle(truncate(result.title(), 2000));
+                    doc.setAuthor(truncate(result.author(), 2000));
+                    doc.setProcessedAt(LocalDateTime.now());
+                    documentRepository.save(doc);
+
                     status.incrementDocuments();
                     status.addChunks(result.chunks().size());
+                    filesProcessed++;
+                    totalChunks += result.chunks().size();
 
-                    log.info("[{}] Completed file: {} ({} chunks)",
-                            jobId, pending.originalFileName(), result.chunks().size());
+                    log.debug("[{}] Done: {} → {} pages, {} chunks",
+                            jobId, pending.originalFileName(), result.totalPages(), result.chunks().size());
 
+                } catch (Exception e) {
+                    filesFailed++;
+                    log.error("[{}] FAILED: {} → {}", jobId, pending.originalFileName(), e.getMessage());
+                    try {
+                        doc.setStatus(DocumentStatus.FAILED);
+                        doc.setTitle(truncate(doc.getTitle(), 2000));
+                        doc.setAuthor(truncate(doc.getAuthor(), 2000));
+                        doc.setErrorMessage(truncate(e.getMessage(), 2000));
+                        doc.setProcessedAt(LocalDateTime.now());
+                        documentRepository.save(doc);
+                    } catch (Exception dbEx) {
+                        log.error("[{}] DB update failed for: {}", jobId, pending.originalFileName());
+                    }
                 } finally {
-                    // Clean up temp file after processing
                     try {
                         Files.deleteIfExists(pending.tempPath());
                     } catch (IOException ignored) {
                     }
+                }
+
+                // Progress log at intervals
+                int done = filesProcessed + filesFailed;
+                if (done % progressInterval == 0 || done == totalFiles) {
+                    long elapsed = System.currentTimeMillis() - jobStartTime;
+                    double rate = done * 1000.0 / elapsed;
+                    log.info("[{}] Progress: {}/{} files, {} chunks, {} files/sec{}",
+                            jobId, done, totalFiles, totalChunks, String.format("%.1f", rate),
+                            filesFailed > 0 ? ", " + filesFailed + " failed" : "");
                 }
             }
 
@@ -163,25 +225,25 @@ public class IngestionJobService {
                 generator.writeEndArray();
                 generator.close();
                 generator = null;
-                outputStream = null; // closed by generator
+                outputStream = null;
             }
 
             status.complete(exportFileName);
-            log.info("[{}] Job completed - {} documents, {} chunks, export: {}",
-                    jobId, status.getDocumentsProcessed(), status.getChunksProcessed(), exportFileName);
+
+            long totalTime = System.currentTimeMillis() - jobStartTime;
+            log.info("[{}] Job completed — {} docs, {} chunks, {} failed, {}s",
+                    jobId, filesProcessed, totalChunks, filesFailed, String.format("%.1f", totalTime / 1000.0));
 
         } catch (Exception e) {
-            log.error("[{}] Job failed: {}", jobId, e.getMessage(), e);
+            log.error("[{}] Job crashed: {}", jobId, e.getMessage(), e);
             status.fail(e.getMessage());
 
-            // Close generator on failure
             if (generator != null) {
                 try { generator.close(); } catch (IOException ignored) {}
             } else if (outputStream != null) {
                 try { outputStream.close(); } catch (IOException ignored) {}
             }
         } finally {
-            // Clean up any remaining temp files
             for (PendingFile pending : files) {
                 try {
                     Files.deleteIfExists(pending.tempPath());
@@ -189,6 +251,11 @@ public class IngestionJobService {
                 }
             }
         }
+    }
+
+    private static String truncate(String value, int maxLength) {
+        if (value == null) return null;
+        return value.length() <= maxLength ? value : value.substring(0, maxLength);
     }
 
     /**

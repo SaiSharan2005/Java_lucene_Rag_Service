@@ -86,7 +86,7 @@ public class ChunkingService {
             chunkIndex++;
         }
 
-        log.info("Created {} chunks from {} tokens for document {} page {}",
+        log.debug("Created {} chunks from {} tokens for document {} page {}",
                 chunks.size(), tokens.length, documentId, pageNumber);
 
         return chunks;
@@ -122,7 +122,7 @@ public class ChunkingService {
             return allChunks;
         }
 
-        log.info("Combined {} pages into {} tokens for cross-page chunking",
+        log.debug("Combined {} pages into {} tokens for cross-page chunking",
                 pageTexts.size(), tokenCount);
 
         // Chunk the entire document
@@ -181,7 +181,7 @@ public class ChunkingService {
             chunkIndex++;
         }
 
-        log.info("Created {} chunks from {} tokens across {} pages for document {}",
+        log.debug("Created {} chunks from {} tokens across {} pages for document {}",
                 allChunks.size(), tokens.length, pageTexts.size(), documentId);
 
         return allChunks;

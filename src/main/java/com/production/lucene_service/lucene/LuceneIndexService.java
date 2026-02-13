@@ -4,12 +4,17 @@ import com.production.lucene_service.config.AppConfig;
 import com.production.lucene_service.model.Chunk;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.lucene.document.*;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.*;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Service
@@ -42,7 +47,7 @@ public class LuceneIndexService {
             }
 
             indexWriter.commit();
-            log.info("Successfully indexed and committed {} chunks for document: {}",
+            log.debug("Indexed {} chunks for document: {}",
                     chunks.size(),
                     chunks.isEmpty() ? "N/A" : chunks.get(0).getDocumentId());
         } finally {
@@ -65,7 +70,7 @@ public class LuceneIndexService {
         writeLock.lock();
         try {
             indexWriter.commit();
-            log.info("Index committed successfully");
+            log.debug("Index committed successfully");
         } finally {
             writeLock.unlock();
         }
@@ -76,14 +81,25 @@ public class LuceneIndexService {
         try {
             indexWriter.deleteDocuments(new Term("document_id", documentId));
             indexWriter.commit();
-            log.info("Deleted all chunks for document: {}", documentId);
+            log.debug("Deleted all chunks for document: {}", documentId);
         } finally {
             writeLock.unlock();
         }
     }
 
-    public long getDocumentCount() throws IOException {
+    public long getChunkCount() throws IOException {
         return indexWriter.getDocStats().numDocs;
+    }
+
+    public long getPdfCount() throws IOException {
+        try (IndexReader reader = DirectoryReader.open(indexWriter)) {
+            Set<String> uniqueDocIds = new HashSet<>();
+            for (int i = 0; i < reader.numDocs(); i++) {
+                Document doc = reader.storedFields().document(i);
+                uniqueDocIds.add(doc.get("document_id"));
+            }
+            return uniqueDocIds.size();
+        }
     }
 
     private Document createDocument(Chunk chunk) {

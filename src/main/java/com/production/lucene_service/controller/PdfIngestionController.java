@@ -3,6 +3,9 @@ package com.production.lucene_service.controller;
 import com.production.lucene_service.model.IngestionResponse;
 import com.production.lucene_service.model.IngestionStatus;
 import com.production.lucene_service.model.JobStatus;
+import com.production.lucene_service.model.ProcessedDocument;
+import com.production.lucene_service.model.ProcessedDocument.DocumentStatus;
+import com.production.lucene_service.repository.ProcessedDocumentRepository;
 import com.production.lucene_service.service.IngestionJobService;
 import com.production.lucene_service.service.IngestionJobService.PendingFile;
 import com.production.lucene_service.service.PdfIngestionService;
@@ -15,14 +18,11 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 /**
- * Validates uploaded files, saves them to temp storage, and submits
- * a background ingestion job. Returns jobId immediately (non-blocking).
+ * Validates uploaded files, checks for duplicates, saves them to temp storage,
+ * and submits a background ingestion job. Returns jobId immediately (non-blocking).
  *
  * Does NOT perform chunking, indexing, or export — that is IngestionJobService's job.
  */
@@ -33,18 +33,21 @@ public class PdfIngestionController {
 
     private final IngestionJobService ingestionJobService;
     private final PdfIngestionService pdfIngestionService;
+    private final ProcessedDocumentRepository documentRepository;
 
     public PdfIngestionController(IngestionJobService ingestionJobService,
-                                  PdfIngestionService pdfIngestionService) {
+                                  PdfIngestionService pdfIngestionService,
+                                  ProcessedDocumentRepository documentRepository) {
         this.ingestionJobService = ingestionJobService;
         this.pdfIngestionService = pdfIngestionService;
+        this.documentRepository = documentRepository;
     }
 
     @PostMapping(value = "/pdf", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<IngestionResponse> ingestPdf(
             @RequestPart("file") MultipartFile[] files) {
 
-        log.info("Received PDF ingestion request - {} file(s)", files.length);
+        log.info("Ingestion request: {} file(s)", files.length);
 
         // Validate: at least one file
         if (files.length == 0) {
@@ -76,6 +79,38 @@ public class PdfIngestionController {
             }
         }
 
+        // Dedup check: separate files into toProcess and skipped
+        List<MultipartFile> toProcess = new ArrayList<>();
+        List<String> skippedFiles = new ArrayList<>();
+
+        for (MultipartFile file : files) {
+            String fileName = file.getOriginalFilename();
+            Optional<ProcessedDocument> existing = documentRepository.findByFileName(fileName);
+
+            if (existing.isPresent() && existing.get().getStatus() == DocumentStatus.COMPLETED) {
+                log.debug("Skipping already-ingested: {}", fileName);
+                skippedFiles.add(fileName);
+            } else {
+                if (existing.isPresent() && existing.get().getStatus() == DocumentStatus.FAILED) {
+                    log.debug("Re-processing failed file: {}", fileName);
+                    documentRepository.delete(existing.get());
+                }
+                toProcess.add(file);
+            }
+        }
+
+        // Case 3: All files already processed
+        if (toProcess.isEmpty()) {
+            log.info("All {} file(s) already ingested — skipped", files.length);
+            return ResponseEntity.ok()
+                    .body(IngestionResponse.builder()
+                            .status(IngestionStatus.SUCCESS)
+                            .message("All " + files.length + " file(s) already ingested")
+                            .filesSubmitted(0)
+                            .skippedFiles(skippedFiles)
+                            .build());
+        }
+
         // Save files to temp directory (MultipartFile is request-scoped — won't survive async)
         Path tempDir = null;
         List<PendingFile> pendingFiles = new ArrayList<>();
@@ -83,7 +118,7 @@ public class PdfIngestionController {
         try {
             tempDir = Files.createTempDirectory("ingest-");
 
-            for (MultipartFile file : files) {
+            for (MultipartFile file : toProcess) {
                 Path tempPath = tempDir.resolve(UUID.randomUUID() + ".pdf");
                 file.transferTo(tempPath.toFile());
                 pendingFiles.add(new PendingFile(tempPath, file.getOriginalFilename()));
@@ -105,13 +140,22 @@ public class PdfIngestionController {
         // Submit background job — returns immediately
         String jobId = ingestionJobService.startJob(pendingFiles);
 
-        log.info("Submitted ingestion job {} for {} files", jobId, files.length);
+        // Build response message
+        String message = toProcess.size() + " file(s) submitted for processing";
+        if (!skippedFiles.isEmpty()) {
+            message += ", " + skippedFiles.size() + " skipped (already ingested)";
+        }
+
+        log.info("Job {} submitted — {} to process, {} skipped",
+                jobId, toProcess.size(), skippedFiles.size());
 
         return ResponseEntity.accepted()
                 .body(IngestionResponse.builder()
                         .jobId(jobId)
                         .status(IngestionStatus.PROCESSING)
-                        .message(files.length + " file(s) submitted for background processing")
+                        .message(message)
+                        .filesSubmitted(toProcess.size())
+                        .skippedFiles(skippedFiles.isEmpty() ? null : skippedFiles)
                         .build());
     }
 
@@ -131,7 +175,7 @@ public class PdfIngestionController {
 
     @DeleteMapping("/document/{documentId}")
     public ResponseEntity<Map<String, String>> deleteDocument(@PathVariable String documentId) {
-        log.info("Received delete request for document: {}", documentId);
+        log.debug("Delete request for document: {}", documentId);
 
         try {
             pdfIngestionService.deleteDocument(documentId);
@@ -153,9 +197,11 @@ public class PdfIngestionController {
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats() {
         try {
-            long documentCount = pdfIngestionService.getIndexedDocumentCount();
+            long chunkCount = pdfIngestionService.getIndexedChunkCount();
+            long pdfCount = pdfIngestionService.getIndexedPdfCount();
             return ResponseEntity.ok(Map.of(
-                    "indexedChunks", documentCount,
+                    "indexedChunks", chunkCount,
+                    "indexedPdfs", pdfCount,
                     "status", "healthy"
             ));
         } catch (IOException e) {

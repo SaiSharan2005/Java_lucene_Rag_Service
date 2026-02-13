@@ -47,7 +47,7 @@ public class PdfIngestionService {
 
         String fileName = originalFileName != null ? originalFileName : "unknown.pdf";
 
-        log.info("Starting PDF ingestion for document: {} (file: {})", documentId, fileName);
+        log.debug("Ingesting: {} (docId: {})", fileName, documentId);
 
         // Step 1: Extract text and PDF metadata
         String title = null;
@@ -64,7 +64,7 @@ public class PdfIngestionService {
             extractPages(document, pages);
         }
 
-        log.info("Extracted {} pages from PDF (title: {}, author: {})", pages.size(), title, author);
+        log.debug("Extracted {} pages from: {}", pages.size(), fileName);
 
         // Step 2-4: common processing
         return processPages(pages, documentId, fileName, title, author);
@@ -82,7 +82,7 @@ public class PdfIngestionService {
         String fileName = file.getOriginalFilename() != null
                 ? file.getOriginalFilename() : "unknown.pdf";
 
-        log.info("Starting PDF ingestion for document: {} (file: {})", documentId, fileName);
+        log.debug("Ingesting: {} (docId: {})", fileName, documentId);
 
         // Step 1: Extract text and PDF metadata
         String title = null;
@@ -99,7 +99,7 @@ public class PdfIngestionService {
             extractPages(document, pages);
         }
 
-        log.info("Extracted {} pages from PDF (title: {}, author: {})", pages.size(), title, author);
+        log.debug("Extracted {} pages from: {}", pages.size(), fileName);
 
         // Step 2-4: common processing
         return processPages(pages, documentId, fileName, title, author);
@@ -121,11 +121,11 @@ public class PdfIngestionService {
 
         // Step 3: Chunk the document
         List<Chunk> chunks = chunkingService.chunkDocument(cleanedTexts, documentId);
-        log.info("Created {} chunks from document", chunks.size());
+        log.debug("Created {} chunks from document", chunks.size());
 
         // Step 4: Index chunks in Lucene
         luceneIndexService.indexChunks(chunks);
-        log.info("Indexed {} chunks in Lucene for document: {}", chunks.size(), documentId);
+        log.debug("Indexed {} chunks for document: {}", chunks.size(), documentId);
 
         int totalTokens = chunks.stream().mapToInt(Chunk::getTokenCount).sum();
 
@@ -152,12 +152,16 @@ public class PdfIngestionService {
     }
 
     public void deleteDocument(String documentId) throws IOException {
-        log.info("Deleting document from index: {}", documentId);
+        log.debug("Deleting document from index: {}", documentId);
         luceneIndexService.deleteByDocumentId(documentId);
     }
 
-    public long getIndexedDocumentCount() throws IOException {
-        return luceneIndexService.getDocumentCount();
+    public long getIndexedChunkCount() throws IOException {
+        return luceneIndexService.getChunkCount();
+    }
+
+    public long getIndexedPdfCount() throws IOException {
+        return luceneIndexService.getPdfCount();
     }
 
     /**
