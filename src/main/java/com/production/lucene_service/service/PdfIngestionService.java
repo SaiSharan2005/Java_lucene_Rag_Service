@@ -54,6 +54,7 @@ public class PdfIngestionService {
         String author = null;
         List<PageContent> pages;
 
+        long extractStart = System.currentTimeMillis();
         try (PDDocument document = Loader.loadPDF(filePath.toFile())) {
             var info = document.getDocumentInformation();
             if (info != null) {
@@ -63,8 +64,9 @@ public class PdfIngestionService {
             pages = new ArrayList<>();
             extractPages(document, pages);
         }
+        long extractMs = System.currentTimeMillis() - extractStart;
 
-        log.debug("Extracted {} pages from: {}", pages.size(), fileName);
+        log.info("[TIMING] {} — extract: {}ms ({} pages)", fileName, extractMs, pages.size());
 
         // Step 2-4: common processing
         return processPages(pages, documentId, fileName, title, author);
@@ -112,22 +114,29 @@ public class PdfIngestionService {
                                          String title, String author) throws IOException {
 
         // Step 2: Clean text for each page
+        long cleanStart = System.currentTimeMillis();
         List<String> cleanedTexts = new ArrayList<>();
         for (PageContent page : pages) {
             String cleanedText = textCleaningService.fullClean(page.getRawText());
             page.setCleanedText(cleanedText);
             cleanedTexts.add(cleanedText);
         }
+        long cleanMs = System.currentTimeMillis() - cleanStart;
 
         // Step 3: Chunk the document
+        long chunkStart = System.currentTimeMillis();
         List<Chunk> chunks = chunkingService.chunkDocument(cleanedTexts, documentId);
-        log.debug("Created {} chunks from document", chunks.size());
+        long chunkMs = System.currentTimeMillis() - chunkStart;
 
         // Step 4: Index chunks in Lucene
+        long indexStart = System.currentTimeMillis();
         luceneIndexService.indexChunks(chunks);
-        log.debug("Indexed {} chunks for document: {}", chunks.size(), documentId);
+        long indexMs = System.currentTimeMillis() - indexStart;
 
         int totalTokens = chunks.stream().mapToInt(Chunk::getTokenCount).sum();
+
+        log.info("[TIMING] {} — clean: {}ms, chunk: {}ms ({} chunks), index: {}ms",
+                fileName, cleanMs, chunkMs, chunks.size(), indexMs);
 
         return new IngestionResult(documentId, fileName, pages.size(), chunks, totalTokens, title, author);
     }

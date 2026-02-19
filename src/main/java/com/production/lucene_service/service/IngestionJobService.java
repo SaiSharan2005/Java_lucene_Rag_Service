@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.production.lucene_service.config.AppConfig;
+import com.production.lucene_service.config.IngestionConfig;
 import com.production.lucene_service.model.Chunk;
 import com.production.lucene_service.model.ChunkExportDTO;
 import com.production.lucene_service.model.JobStatus;
@@ -24,10 +25,15 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Manages asynchronous PDF ingestion jobs.
@@ -51,19 +57,23 @@ public class IngestionJobService {
     private final ConcurrentHashMap<String, JobStatus> jobs = new ConcurrentHashMap<>();
     private final PdfIngestionService pdfIngestionService;
     private final AppConfig appConfig;
+    private final IngestionConfig ingestionConfig;
     private final ObjectMapper objectMapper;
     private final ProcessedDocumentRepository documentRepository;
     private final Executor ingestionExecutor;
+    private ExecutorService pdfProcessingPool;
 
     private Path exportDir;
     private boolean exportEnabled;
 
     public IngestionJobService(PdfIngestionService pdfIngestionService,
                                AppConfig appConfig,
+                               IngestionConfig ingestionConfig,
                                ProcessedDocumentRepository documentRepository,
                                @Qualifier("ingestionExecutor") Executor ingestionExecutor) {
         this.pdfIngestionService = pdfIngestionService;
         this.appConfig = appConfig;
+        this.ingestionConfig = ingestionConfig;
         this.documentRepository = documentRepository;
         this.ingestionExecutor = ingestionExecutor;
         this.objectMapper = new ObjectMapper();
@@ -72,6 +82,10 @@ public class IngestionJobService {
 
     @PostConstruct
     public void init() throws IOException {
+        // Initialize PDF processing thread pool
+        int threadCount = ingestionConfig.resolveThreadCount();
+        pdfProcessingPool = Executors.newFixedThreadPool(threadCount);
+
         exportEnabled = appConfig.getRag().getExport().isEnabled();
 
         if (!exportEnabled) {
@@ -102,158 +116,213 @@ public class IngestionJobService {
         return jobId;
     }
 
+    /**
+     * Starts an async ingestion job for local directory files (not copied — read in place).
+     * Source files are NOT deleted after processing.
+     */
+    public String startLocalJob(List<PendingFile> files) {
+        String jobId = "job_" + UUID.randomUUID().toString().substring(0, 12);
+        JobStatus status = new JobStatus(jobId, files.size());
+        jobs.put(jobId, status);
+
+        log.info("[{}] Local job created — {} files queued", jobId, files.size());
+
+        ingestionExecutor.execute(() -> processJob(jobId, files));
+
+        return jobId;
+    }
+
     public JobStatus getJobStatus(String jobId) {
         return jobs.get(jobId);
     }
 
     /**
-     * Background processing: processes files one-by-one, streams chunks to JSON.
+     * Background processing: processes files in parallel, streams chunks to JSON after completion.
      *
-     * Memory guarantee: only one PDF's chunks exist in memory at any time.
-     * The chunk list from each IngestionResult is written to the JsonGenerator
-     * and becomes eligible for GC before the next file is processed.
+     * Flow:
+     *   1. Submit all PDFs to thread pool for parallel processing
+     *   2. Wait for all to complete (futures.get())
+     *   3. Export results to JSON
      *
-     * Called via injected executor (not @Async) to avoid self-invocation proxy bypass.
+     * Thread safety:
+     *   - AtomicInteger for counters (documentsProcessed, chunksProcessed)
+     *   - ConcurrentHashMap for ingestion results
+     *   - Single JsonGenerator for export (after all PDFs complete)
      */
     private void processJob(String jobId, List<PendingFile> files) {
         JobStatus status = jobs.get(jobId);
         int totalFiles = files.size();
-        int filesProcessed = 0;
-        int filesFailed = 0;
-        int totalChunks = 0;
         long jobStartTime = System.currentTimeMillis();
 
         // Calculate progress interval (log every ~10%, minimum every 10 files)
         int progressInterval = Math.max(1, Math.min(totalFiles / 10, 10));
+
+        // Thread-safe counters
+        AtomicInteger filesProcessed = new AtomicInteger(0);
+        AtomicInteger filesFailed = new AtomicInteger(0);
+        AtomicInteger totalChunks = new AtomicInteger(0);
+
+        // Store results for JSON export (after all threads complete)
+        ConcurrentHashMap<String, IngestionResult> results = new ConcurrentHashMap<>();
+        List<Future<?>> futures = new ArrayList<>();
+
+        // Submit all PDFs for parallel processing
+        for (PendingFile pending : files) {
+            Future<?> future = pdfProcessingPool.submit(() -> {
+                processSinglePdf(jobId, pending, status, filesProcessed, filesFailed, totalChunks, results, progressInterval, totalFiles, jobStartTime);
+            });
+            futures.add(future);
+        }
+
+        // Wait for all futures to complete
+        try {
+            for (Future<?> future : futures) {
+                future.get();  // Block until this PDF finishes
+            }
+        } catch (Exception e) {
+            log.error("[{}] Error waiting for PDF processing: {}", jobId, e.getMessage(), e);
+            status.fail(e.getMessage());
+            return;
+        }
+
+        // Export results to JSON after all PDFs processed
+        exportResults(jobId, status, results);
+
+        long totalTime = System.currentTimeMillis() - jobStartTime;
+        log.info("[{}] Job completed — {} docs, {} chunks, {} failed, {}s",
+                jobId, filesProcessed.get(), totalChunks.get(), filesFailed.get(), String.format("%.1f", totalTime / 1000.0));
+    }
+
+    /**
+     * Process a single PDF in a worker thread.
+     * Updates thread-safe counters and stores results for later JSON export.
+     */
+    private void processSinglePdf(String jobId, PendingFile pending, JobStatus status,
+                                   AtomicInteger filesProcessed, AtomicInteger filesFailed,
+                                   AtomicInteger totalChunks, ConcurrentHashMap<String, IngestionResult> results,
+                                   int progressInterval, int totalFiles, long jobStartTime) {
+        String documentId = UUID.randomUUID().toString();
+        long fileSizeBytes = 0;
+        ProcessedDocument doc = null;
+
+        try {
+            fileSizeBytes = Files.size(pending.tempPath());
+        } catch (IOException ignored) {}
+
+        // Save document record with PROCESSING status
+        doc = ProcessedDocument.builder()
+                .fileName(pending.originalFileName())
+                .documentId(documentId)
+                .status(DocumentStatus.PROCESSING)
+                .fileSizeBytes(fileSizeBytes)
+                .build();
+        doc = documentRepository.save(doc);
+
+        try {
+            log.debug("[{}] Processing: {}", jobId, pending.originalFileName());
+
+            // Extract → Clean → Chunk → Index (existing pipeline)
+            IngestionResult result = pdfIngestionService.ingestPdf(
+                    pending.tempPath(), pending.originalFileName(), documentId);
+
+            // Store result for JSON export
+            results.put(documentId, result);
+
+            // Update document record
+            doc.setStatus(DocumentStatus.COMPLETED);
+            doc.setTotalPages(result.totalPages());
+            doc.setTotalChunks(result.chunks().size());
+            doc.setTotalTokens(result.totalTokens());
+            doc.setTitle(truncate(result.title(), 2000));
+            doc.setAuthor(truncate(result.author(), 2000));
+            doc.setProcessedAt(LocalDateTime.now());
+            documentRepository.save(doc);
+
+            // Update thread-safe counters
+            status.incrementDocuments();
+            status.addChunks(result.chunks().size());
+            filesProcessed.incrementAndGet();
+            totalChunks.addAndGet(result.chunks().size());
+
+            log.debug("[{}] Done: {} → {} pages, {} chunks",
+                    jobId, pending.originalFileName(), result.totalPages(), result.chunks().size());
+
+        } catch (Exception e) {
+            filesFailed.incrementAndGet();
+            log.error("[{}] FAILED: {} → {}", jobId, pending.originalFileName(), e.getMessage());
+            try {
+                doc.setStatus(DocumentStatus.FAILED);
+                doc.setTitle(truncate(doc.getTitle(), 2000));
+                doc.setAuthor(truncate(doc.getAuthor(), 2000));
+                doc.setErrorMessage(truncate(e.getMessage(), 2000));
+                doc.setProcessedAt(LocalDateTime.now());
+                documentRepository.save(doc);
+            } catch (Exception dbEx) {
+                log.error("[{}] DB update failed for: {}", jobId, pending.originalFileName());
+            }
+        } finally {
+            if (pending.deleteAfter()) {
+                try {
+                    Files.deleteIfExists(pending.tempPath());
+                } catch (IOException ignored) {}
+            }
+
+            // Log progress
+            int done = filesProcessed.get() + filesFailed.get();
+            if (done % progressInterval == 0 || done == totalFiles) {
+                long elapsed = System.currentTimeMillis() - jobStartTime;
+                double rate = done * 1000.0 / elapsed;
+                log.info("[{}] Progress: {}/{} files, {} chunks, {} files/sec{}",
+                        jobId, done, totalFiles, totalChunks.get(), String.format("%.1f", rate),
+                        filesFailed.get() > 0 ? ", " + filesFailed.get() + " failed" : "");
+            }
+        }
+    }
+
+    /**
+     * Export all ingested results to JSON file.
+     * Called after all PDF processing completes.
+     */
+    private void exportResults(String jobId, JobStatus status, ConcurrentHashMap<String, IngestionResult> results) {
+        if (!exportEnabled || results.isEmpty()) {
+            return;
+        }
 
         String exportFileName = null;
         JsonGenerator generator = null;
         OutputStream outputStream = null;
 
         try {
-            // Setup JSON export stream
-            if (exportEnabled) {
-                String timestamp = LocalDateTime.now().format(FILE_NAME_FORMATTER);
-                exportFileName = timestamp + ".json";
-                Path exportFile = exportDir.resolve(exportFileName);
+            String timestamp = LocalDateTime.now().format(FILE_NAME_FORMATTER);
+            exportFileName = timestamp + ".json";
+            Path exportFile = exportDir.resolve(exportFileName);
 
-                outputStream = Files.newOutputStream(exportFile);
-                generator = objectMapper.getFactory().createGenerator(outputStream, JsonEncoding.UTF8);
-                generator.useDefaultPrettyPrinter();
-                generator.writeStartArray();
+            outputStream = Files.newOutputStream(exportFile);
+            generator = objectMapper.getFactory().createGenerator(outputStream, JsonEncoding.UTF8);
+            generator.useDefaultPrettyPrinter();
+            generator.writeStartArray();
 
-                log.debug("[{}] Export file → {}", jobId, exportFile.toAbsolutePath());
-            }
+            log.debug("[{}] Export file → {}", jobId, exportFile.toAbsolutePath());
 
-            // Process each file sequentially
-            for (PendingFile pending : files) {
-                log.debug("[{}] Processing: {}", jobId, pending.originalFileName());
-
-                // Save document record with PROCESSING status
-                String documentId = UUID.randomUUID().toString();
-                long fileSizeBytes = 0;
-                try {
-                    fileSizeBytes = Files.size(pending.tempPath());
-                } catch (IOException ignored) {}
-
-                ProcessedDocument doc = ProcessedDocument.builder()
-                        .fileName(pending.originalFileName())
-                        .documentId(documentId)
-                        .status(DocumentStatus.PROCESSING)
-                        .fileSizeBytes(fileSizeBytes)
-                        .build();
-                doc = documentRepository.save(doc);
-
-                try {
-                    IngestionResult result = pdfIngestionService.ingestPdf(
-                            pending.tempPath(), pending.originalFileName(), documentId);
-
-                    // Stream chunks to JSON
-                    if (generator != null) {
-                        for (Chunk chunk : result.chunks()) {
-                            ChunkExportDTO dto = ChunkExportDTO.fromChunk(chunk, result);
-                            generator.writeObject(dto);
-                        }
-                    }
-
-                    // Update document record
-                    doc.setStatus(DocumentStatus.COMPLETED);
-                    doc.setTotalPages(result.totalPages());
-                    doc.setTotalChunks(result.chunks().size());
-                    doc.setTotalTokens(result.totalTokens());
-                    doc.setTitle(truncate(result.title(), 2000));
-                    doc.setAuthor(truncate(result.author(), 2000));
-                    doc.setProcessedAt(LocalDateTime.now());
-                    documentRepository.save(doc);
-
-                    status.incrementDocuments();
-                    status.addChunks(result.chunks().size());
-                    filesProcessed++;
-                    totalChunks += result.chunks().size();
-
-                    log.debug("[{}] Done: {} → {} pages, {} chunks",
-                            jobId, pending.originalFileName(), result.totalPages(), result.chunks().size());
-
-                } catch (Exception e) {
-                    filesFailed++;
-                    log.error("[{}] FAILED: {} → {}", jobId, pending.originalFileName(), e.getMessage());
-                    try {
-                        doc.setStatus(DocumentStatus.FAILED);
-                        doc.setTitle(truncate(doc.getTitle(), 2000));
-                        doc.setAuthor(truncate(doc.getAuthor(), 2000));
-                        doc.setErrorMessage(truncate(e.getMessage(), 2000));
-                        doc.setProcessedAt(LocalDateTime.now());
-                        documentRepository.save(doc);
-                    } catch (Exception dbEx) {
-                        log.error("[{}] DB update failed for: {}", jobId, pending.originalFileName());
-                    }
-                } finally {
-                    try {
-                        Files.deleteIfExists(pending.tempPath());
-                    } catch (IOException ignored) {
-                    }
-                }
-
-                // Progress log at intervals
-                int done = filesProcessed + filesFailed;
-                if (done % progressInterval == 0 || done == totalFiles) {
-                    long elapsed = System.currentTimeMillis() - jobStartTime;
-                    double rate = done * 1000.0 / elapsed;
-                    log.info("[{}] Progress: {}/{} files, {} chunks, {} files/sec{}",
-                            jobId, done, totalFiles, totalChunks, String.format("%.1f", rate),
-                            filesFailed > 0 ? ", " + filesFailed + " failed" : "");
+            // Write all results to JSON
+            for (IngestionResult result : results.values()) {
+                for (Chunk chunk : result.chunks()) {
+                    ChunkExportDTO dto = ChunkExportDTO.fromChunk(chunk, result);
+                    generator.writeObject(dto);
                 }
             }
 
-            // Close JSON array
-            if (generator != null) {
-                generator.writeEndArray();
-                generator.close();
-                generator = null;
-                outputStream = null;
-            }
-
+            generator.writeEndArray();
             status.complete(exportFileName);
-
-            long totalTime = System.currentTimeMillis() - jobStartTime;
-            log.info("[{}] Job completed — {} docs, {} chunks, {} failed, {}s",
-                    jobId, filesProcessed, totalChunks, filesFailed, String.format("%.1f", totalTime / 1000.0));
+            log.debug("[{}] Export complete: {}", jobId, exportFileName);
 
         } catch (Exception e) {
-            log.error("[{}] Job crashed: {}", jobId, e.getMessage(), e);
-            status.fail(e.getMessage());
-
+            log.error("[{}] Export failed: {}", jobId, e.getMessage(), e);
+        } finally {
             if (generator != null) {
                 try { generator.close(); } catch (IOException ignored) {}
             } else if (outputStream != null) {
                 try { outputStream.close(); } catch (IOException ignored) {}
-            }
-        } finally {
-            for (PendingFile pending : files) {
-                try {
-                    Files.deleteIfExists(pending.tempPath());
-                } catch (IOException ignored) {
-                }
             }
         }
     }
@@ -267,5 +336,10 @@ public class IngestionJobService {
      * A file saved to a temp path, ready for background processing.
      * Created by the controller before the HTTP request completes.
      */
-    public record PendingFile(Path tempPath, String originalFileName) {}
+    public record PendingFile(Path tempPath, String originalFileName, boolean deleteAfter) {
+        /** Backwards-compatible constructor — defaults to deleteAfter=true (temp files). */
+        public PendingFile(Path tempPath, String originalFileName) {
+            this(tempPath, originalFileName, true);
+        }
+    }
 }

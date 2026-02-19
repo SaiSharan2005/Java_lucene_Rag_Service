@@ -32,8 +32,11 @@ public class TextCleaningService {
 
         String text = rawText;
 
-        // Step 1: Unicode NFC normalization
-        text = Normalizer.normalize(text, Normalizer.Form.NFC);
+        // Step 0: Sanitize Unicode (surrogates, NUL bytes, control chars)
+        text = sanitizeUnicode(text);
+
+        // Step 1: Unicode NFKC normalization (compatibility — resolves PDF ligatures like ﬁ→fi)
+        text = Normalizer.normalize(text, Normalizer.Form.NFKC);
 
         // Step 2: Remove control characters (keep newlines and tabs)
         text = CONTROL_CHARS.matcher(text).replaceAll("");
@@ -72,6 +75,58 @@ public class TextCleaningService {
         }
 
         return result.toString();
+    }
+
+    /**
+     * Sanitizes raw PDF text for embedding models.
+     * Repairs/removes surrogate pairs, strips NUL bytes, and replaces
+     * control characters (except \n \r \t) with spaces.
+     */
+    private String sanitizeUnicode(String text) {
+        // Step A: Handle surrogate characters (broken Unicode from PDF extraction)
+        boolean hasSurrogates = false;
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (ch >= 0xD800 && ch <= 0xDFFF) {
+                hasSurrogates = true;
+                break;
+            }
+        }
+
+        if (hasSurrogates) {
+            // Try to repair surrogate pairs by re-encoding through UTF-16
+            try {
+                byte[] utf16Bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_16);
+                text = new String(utf16Bytes, java.nio.charset.StandardCharsets.UTF_16);
+            } catch (Exception e) {
+                // Repair failed — drop all surrogate characters
+                StringBuilder sb = new StringBuilder(text.length());
+                for (int i = 0; i < text.length(); i++) {
+                    char ch = text.charAt(i);
+                    if (ch < 0xD800 || ch > 0xDFFF) {
+                        sb.append(ch);
+                    }
+                }
+                text = sb.toString();
+                log.debug("Dropped surrogate characters from text");
+            }
+        }
+
+        // Step B: Remove NUL bytes
+        text = text.replace("\0", "");
+
+        // Step C: Replace control characters (except \n \r \t) with space
+        StringBuilder cleaned = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (ch < 32 && ch != '\n' && ch != '\r' && ch != '\t') {
+                cleaned.append(' ');
+            } else {
+                cleaned.append(ch);
+            }
+        }
+
+        return cleaned.toString();
     }
 
     public String removeHyphenation(String text) {

@@ -49,6 +49,9 @@ arxiv:
   max-retries: 3
   max-papers-per-query: 50000
 
+ingestion:
+  threads: auto
+
 logging:
   level:
     com.production.lucene_service: INFO
