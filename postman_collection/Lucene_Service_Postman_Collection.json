@@ -1,0 +1,1192 @@
+{
+  "info": {
+    "name": "Lucene Service API Collection",
+    "description": "Complete API documentation for the Lucene Service with all endpoints organized by features",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Search Feature",
+      "description": "Search APIs for querying indexed documents and retrieving results",
+      "item": [
+        {
+          "name": "Search (GET)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Test that response is successful\n",
+                  "pm.test('Status code is 200', function () {\n",
+                  "    pm.response.to.have.status(200);\n",
+                  "});\n",
+                  "\n",
+                  "// Test response structure\n",
+                  "pm.test('Response has required fields', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('query');\n",
+                  "    pm.expect(jsonData).to.have.property('totalHits');\n",
+                  "    pm.expect(jsonData).to.have.property('searchTimeMs');\n",
+                  "    pm.expect(jsonData).to.have.property('results');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/search?q=artificial intelligence&topK=10",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "artificial intelligence",
+                  "description": "Search query (required)"
+                },
+                {
+                  "key": "topK",
+                  "value": "10",
+                  "description": "Number of results to return (1-100, default: 10)"
+                },
+                {
+                  "key": "documentId",
+                  "value": "doc-uuid-here",
+                  "description": "Optional: Filter results by specific document ID",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Search all indexed documents with a query string"
+          },
+          "response": [
+            {
+              "name": "Successful Search Response",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/search?q=artificial intelligence&topK=5",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "artificial intelligence"
+                    },
+                    {
+                      "key": "topK",
+                      "value": "5"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"query\": \"artificial intelligence\",\n  \"totalHits\": 42,\n  \"searchTimeMs\": 125,\n  \"results\": [\n    {\n      \"chunkId\": \"chunk-001\",\n      \"documentId\": \"doc-uuid-1\",\n      \"content\": \"Artificial intelligence is the simulation of human intelligence processes by computers...\",\n      \"pageNumber\": 1,\n      \"chunkIndex\": 0,\n      \"score\": 9.85\n    },\n    {\n      \"chunkId\": \"chunk-002\",\n      \"documentId\": \"doc-uuid-1\",\n      \"content\": \"Machine learning is a subset of artificial intelligence...\",\n      \"pageNumber\": 2,\n      \"chunkIndex\": 1,\n      \"score\": 8.92\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Search (POST)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {\n",
+                  "    pm.response.to.have.status(200);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response has required fields', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('query');\n",
+                  "    pm.expect(jsonData).to.have.property('totalHits');\n",
+                  "    pm.expect(jsonData).to.have.property('searchTimeMs');\n",
+                  "    pm.expect(jsonData).to.have.property('results');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"neural networks\",\n  \"topK\": 15,\n  \"documentId\": null\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/search",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "search"
+              ]
+            },
+            "description": "Search using POST request with JSON body"
+          },
+          "response": [
+            {
+              "name": "Successful Search Response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"neural networks\",\n  \"topK\": 10\n}"
+                },
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/search",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "search"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"query\": \"neural networks\",\n  \"totalHits\": 28,\n  \"searchTimeMs\": 95,\n  \"results\": [\n    {\n      \"chunkId\": \"chunk-045\",\n      \"documentId\": \"doc-uuid-5\",\n      \"content\": \"Neural networks are computing systems inspired by biological neural networks...\",\n      \"pageNumber\": 5,\n      \"chunkIndex\": 4,\n      \"score\": 10.25\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Chunk Statistics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {\n",
+                  "    pm.response.to.have.status(200);\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/search/chunk-stats",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "chunk-stats"
+              ]
+            },
+            "description": "Get statistics about indexed chunks"
+          },
+          "response": [
+            {
+              "name": "Chunk Statistics Response",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/search/chunk-stats",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "search",
+                    "chunk-stats"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"totalChunks\": 1250,\n  \"totalIndexedSize\": 15000000,\n  \"averageChunkSize\": 12000,\n  \"indexedDocuments\": 35\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PDF Ingestion Feature",
+      "description": "APIs for uploading and managing PDF files",
+      "item": [
+        {
+          "name": "Ingest PDF Files (Upload)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202 (Accepted)', function () {\n",
+                  "    pm.response.to.have.status(202);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response has jobId', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('jobId');\n",
+                  "    pm.expect(jsonData.status).to.equal('PROCESSING');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "/path/to/your/document.pdf",
+                  "description": "PDF file to upload"
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/ingest/pdf",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "pdf"
+              ]
+            },
+            "description": "Upload one or more PDF files for ingestion. Multiple files can be submitted at once."
+          },
+          "response": [
+            {
+              "name": "Success - Files Submitted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": "document.pdf"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/ingest/pdf",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "ingest",
+                    "pdf"
+                  ]
+                }
+              },
+              "status": "Accepted",
+              "code": 202,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"jobId\": \"job-uuid-123\",\n  \"status\": \"PROCESSING\",\n  \"message\": \"1 file(s) submitted for processing\",\n  \"filesSubmitted\": 1\n}"
+            }
+          ]
+        },
+        {
+          "name": "Ingest from Local Directory",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202 (Accepted)', function () {\n",
+                  "    pm.response.to.have.status(202);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response has jobId', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('jobId');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"directory\": \"/path/to/pdf/folder\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/ingest/local",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "local"
+              ]
+            },
+            "description": "Ingest all PDF files from a local directory"
+          },
+          "response": [
+            {
+              "name": "Success - Files Queued",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"directory\": \"/path/to/pdfs\"\n}"
+                },
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/ingest/local",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "ingest",
+                    "local"
+                  ]
+                }
+              },
+              "status": "Accepted",
+              "code": 202,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"jobId\": \"job-uuid-456\",\n  \"status\": \"PROCESSING\",\n  \"message\": \"5 file(s) submitted for processing\",\n  \"filesSubmitted\": 5,\n  \"skippedFiles\": [\"already-ingested.pdf\"]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Check Ingestion Job Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {\n",
+                  "    pm.response.to.have.status(200);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response has status information', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('jobId');\n",
+                  "    pm.expect(jsonData).to.have.property('status');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/ingest/status/job-uuid-123",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "status",
+                "job-uuid-123"
+              ]
+            },
+            "description": "Check the status of an ingestion job by its ID"
+          },
+          "response": [
+            {
+              "name": "Job In Progress",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/ingest/status/job-uuid-123",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "ingest",
+                    "status",
+                    "job-uuid-123"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"jobId\": \"job-uuid-123\",\n  \"status\": \"PROCESSING\",\n  \"documentsProcessed\": 2,\n  \"chunksProcessed\": 45,\n  \"documentsSkipped\": 0,\n  \"totalFiles\": 3,\n  \"startTime\": \"2025-02-20T10:30:00Z\"\n}"
+            },
+            {
+              "name": "Job Completed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/ingest/status/job-uuid-123",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "ingest",
+                    "status",
+                    "job-uuid-123"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"jobId\": \"job-uuid-123\",\n  \"status\": \"COMPLETED\",\n  \"documentsProcessed\": 3,\n  \"chunksProcessed\": 125,\n  \"documentsSkipped\": 0,\n  \"exportFileName\": \"export-job-uuid-123.json\",\n  \"totalFiles\": 3,\n  \"startTime\": \"2025-02-20T10:30:00Z\",\n  \"endTime\": \"2025-02-20T10:45:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Document",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {\n",
+                  "    pm.response.to.have.status(200);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response confirms deletion', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData.status).to.equal('success');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/ingest/document/doc-uuid-1",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "document",
+                "doc-uuid-1"
+              ]
+            },
+            "description": "Delete a document and all its chunks from the index"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/ingest/document/doc-uuid-1",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "ingest",
+                    "document",
+                    "doc-uuid-1"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"success\",\n  \"message\": \"Document deleted successfully\",\n  \"documentId\": \"doc-uuid-1\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Ingestion Statistics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {\n",
+                  "    pm.response.to.have.status(200);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response has statistics', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('indexedChunks');\n",
+                  "    pm.expect(jsonData).to.have.property('indexedPdfs');\n",
+                  "    pm.expect(jsonData).to.have.property('status');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/ingest/stats",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "stats"
+              ]
+            },
+            "description": "Get overall ingestion statistics"
+          },
+          "response": [
+            {
+              "name": "Statistics",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/ingest/stats",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "ingest",
+                    "stats"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"indexedChunks\": 1250,\n  \"indexedPdfs\": 35,\n  \"status\": \"healthy\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get All Documents",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {\n",
+                  "    pm.response.to.have.status(200);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response has document list', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('documents');\n",
+                  "    pm.expect(jsonData).to.have.property('total');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/ingest/documents?limit=50&status=COMPLETED",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "documents"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of documents to return (default: 50)"
+                },
+                {
+                  "key": "status",
+                  "value": "COMPLETED",
+                  "description": "Filter by status: COMPLETED, PROCESSING, FAILED",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List all ingested documents with their metadata"
+          },
+          "response": [
+            {
+              "name": "Document List",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/ingest/documents?limit=10",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "ingest",
+                    "documents"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"total\": 35,\n  \"completed\": 33,\n  \"failed\": 0,\n  \"processing\": 2,\n  \"documents\": [\n    {\n      \"id\": 1,\n      \"fileName\": \"research-paper.pdf\",\n      \"documentId\": \"doc-uuid-1\",\n      \"status\": \"COMPLETED\",\n      \"totalChunks\": 45,\n      \"totalTokens\": 12500,\n      \"fileSizeBytes\": 2500000,\n      \"title\": \"Advanced AI Research\",\n      \"author\": \"John Doe\",\n      \"processedAt\": \"2025-02-20T10:45:00Z\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {\n",
+                  "    pm.response.to.have.status(200);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Service is UP', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData.status).to.equal('UP');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/ingest/health",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "health"
+              ]
+            },
+            "description": "Check if the service is healthy and running"
+          },
+          "response": [
+            {
+              "name": "Service Up",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/ingest/health",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "ingest",
+                    "health"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"UP\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "arXiv Ingestion Feature",
+      "description": "APIs for ingesting research papers from arXiv",
+      "item": [
+        {
+          "name": "Ingest Papers by Category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202 (Accepted)', function () {\n",
+                  "    pm.response.to.have.status(202);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response has jobId', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('jobId');\n",
+                  "    pm.expect(jsonData.status).to.equal('PROCESSING');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"cs.AI\",\n  \"maxResults\": 50\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/arxiv/ingest",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "arxiv",
+                "ingest"
+              ]
+            },
+            "description": "Ingest papers from a specific arXiv category (e.g., cs.AI, cs.CL, cs.CV, math.AP)"
+          },
+          "response": [
+            {
+              "name": "Success - Ingestion Started",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"category\": \"cs.AI\",\n  \"maxResults\": 50\n}"
+                },
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/arxiv/ingest",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "arxiv",
+                    "ingest"
+                  ]
+                }
+              },
+              "status": "Accepted",
+              "code": 202,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"jobId\": \"job-arxiv-789\",\n  \"status\": \"PROCESSING\",\n  \"message\": \"arXiv ingestion started for category 'cs.AI' (max 50 papers)\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Ingest Specific Papers by IDs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202 (Accepted)', function () {\n",
+                  "    pm.response.to.have.status(202);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response has jobId', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('jobId');\n",
+                  "    pm.expect(jsonData).to.have.property('filesSubmitted');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paperIds\": [\"2301.00001\", \"2301.00002\", \"2301.00003\"]\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/arxiv/ingest/papers",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "arxiv",
+                "ingest",
+                "papers"
+              ]
+            },
+            "description": "Ingest specific papers by their arXiv IDs"
+          },
+          "response": [
+            {
+              "name": "Success - Papers Queued",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"paperIds\": [\"2301.00001\", \"2301.00002\"]\n}"
+                },
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/arxiv/ingest/papers",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "arxiv",
+                    "ingest",
+                    "papers"
+                  ]
+                }
+              },
+              "status": "Accepted",
+              "code": 202,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"jobId\": \"job-arxiv-790\",\n  \"status\": \"PROCESSING\",\n  \"message\": \"2 arXiv paper(s) submitted for processing\",\n  \"filesSubmitted\": 2\n}"
+            }
+          ]
+        },
+        {
+          "name": "Check arXiv Ingestion Job Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {\n",
+                  "    pm.response.to.have.status(200);\n",
+                  "});\n",
+                  "\n",
+                  "pm.test('Response has status information', function () {\n",
+                  "    var jsonData = pm.response.json();\n",
+                  "    pm.expect(jsonData).to.have.property('jobId');\n",
+                  "    pm.expect(jsonData).to.have.property('status');\n",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/arxiv/status/job-arxiv-789",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "v1",
+                "arxiv",
+                "status",
+                "job-arxiv-789"
+              ]
+            },
+            "description": "Check the status of an arXiv ingestion job"
+          },
+          "response": [
+            {
+              "name": "Job In Progress",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/arxiv/status/job-arxiv-789",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "arxiv",
+                    "status",
+                    "job-arxiv-789"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"jobId\": \"job-arxiv-789\",\n  \"status\": \"PROCESSING\",\n  \"documentsProcessed\": 5,\n  \"chunksProcessed\": 150,\n  \"documentsSkipped\": 2,\n  \"totalFiles\": 10,\n  \"startTime\": \"2025-02-20T11:00:00Z\"\n}"
+            },
+            {
+              "name": "Job Completed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/api/v1/arxiv/status/job-arxiv-789",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "8080",
+                  "path": [
+                    "api",
+                    "v1",
+                    "arxiv",
+                    "status",
+                    "job-arxiv-789"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"jobId\": \"job-arxiv-789\",\n  \"status\": \"COMPLETED\",\n  \"documentsProcessed\": 50,\n  \"chunksProcessed\": 1250,\n  \"documentsSkipped\": 0,\n  \"exportFileName\": \"export-job-arxiv-789.json\",\n  \"totalFiles\": 50,\n  \"startTime\": \"2025-02-20T11:00:00Z\",\n  \"endTime\": \"2025-02-20T12:30:00Z\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "api_version",
+      "value": "v1",
+      "type": "string"
+    }
+  ]
+}
